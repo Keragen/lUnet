@@ -68,7 +68,7 @@ Edit paths in the script:
 Parallelism:
 - `makeCluster(5)` sets the number of workers (per subfolder).
 
-Run the script in R. At the end it prints: `all done!!`
+Run the script in R. If no problem occur, at the end it prints: `all done!!`
 
 ---
 
@@ -127,7 +127,7 @@ Edit key variables:
 Parallelism:
 - `makeCluster(30)` runs one worker per track (set this to match the maximum number of tracks in your CSVs).
 
-Run the script in R. At the end it stops the cluster and prints: `all done!!`
+Run the script in R. If no problem occur, at the end it prints: `all done!!`
 
 ---
 
@@ -154,6 +154,7 @@ Run the script in R. At the end it stops the cluster and prints: `all done!!`
 
 
 Download the latest release to get the code together with the ML models required by this software.
+
 
 
 
