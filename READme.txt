@@ -1,3 +1,7 @@
+The pipeline takes raw two-channel microscopy movies (for example, green and red channels) and processes them in two consecutive steps. First, it converts the raw .TIF frames into JPEG previews and runs two deep-learning U-Net models to segment each frame into nucleus and cytoplasm regions. It then cleans and separates objects (e.g., watershed for nuclei and a Voronoi-like assignment for cytoplasm), and exports labeled masks plus per-cell measurements like size and shape.
+
+In the second step, the pipeline reads those segmentation masks together with the original .TIF data and a CSV file containing tracked spot coordinates (x, y, z, frame). For each spot and each frame, it crops a small window around the spot, detects the spot pixels mainly inside the nuclear region, and can optionally use a machine-learning classifier to remove false-positive spot objects. It then measures fluorescence signals over time: the spot intensity (red and green), the local nuclear background around the spot, and the average intensity of the full nucleus and cytoplasm belonging to that spot’s cell. Finally, it writes per-frame quantification tables, produces QC composite images, generates per-track plots, and saves spot mask examples for later quality control or machine-learning training.
+
 # LUnet + Spot-On pipeline (microscopy movies → segmentation → spot quantification)
 
 This repo provides a two-step R pipeline that must be run **in sequence**:
@@ -150,6 +154,7 @@ Run the script in R. At the end it stops the cluster and prints: `all done!!`
 
 
 Download the latest release to get the code together with the ML models required by this software.
+
 
 
 
