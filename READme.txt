@@ -1,107 +1,155 @@
-# LUnet preprocessing pipeline (microscopy movies)
+# LUnet + Spot-On pipeline (microscopy movies → segmentation → spot quantification)
 
-This repository contains an R script (`LUnet-server4.r`) used to preprocess multi-channel microscopy movies and generate segmentation masks (nuclei + cytoplasm) prior to signal quantification (with **Spot-On**).
+This repo provides a two-step R pipeline that must be run **in sequence**:
+
+1. **`LUnet-server4.r`**  
+   Preprocesses raw microscope `.TIF` files, generates RGB previews, and produces **nucleus + cytoplasm segmentation masks** using two pretrained U-Net models.
+
+2. **`spoton5.r`**  
+   Uses the LUnet masks + original `.TIF` movies + a spot tracking `.csv` to **detect spot masks**, **quantify red/green intensities**, generate QC composites, and export tables/plots.
+
+> Important: LUnet generates masks at **1024×1024** for performance. `spoton5.r` automatically rescales masks to match the original image size (e.g. 2048×2048) when needed.
 
 ---
 
-## What the script does
+## Step 0 — Requirements
 
-### 1) Load two pretrained U-Net models (Keras)
-The pipeline uses two separate U-Net models (`.h5` weights):
-- **NUC** model: nucleus segmentation
-- **CYTO** model: cytoplasm segmentation
+### R packages
+You will need (at least):
+- `keras`, `magick`, `EBImage`, `ggplot2`, `sp`, `stringr`
+- `foreach`, `doParallel`
+- LUnet also uses: `shotGroups`, `scales`, `dplyr`, `gtools`
+- Spot-On also uses: `geometry`
 
-### 2) Parse input `.TIF` files (two channels)
-The script scans subfolders under an input root directory and expects file names like:
+### Deep learning models
+- U-Net weights (`.h5`):
+  - nucleus model (NUC)
+  - cytoplasm model (CYTO)
+- Spot validation model (`.h5`, optional but used by default in the script):
+  - `fullmodelSpot.h5` (filters false-positive spot objects in the red channel)
 
+A working TensorFlow/Keras setup is required to load these `.h5` models.
+
+---
+
+## Step 1 — Run LUnet preprocessing (`LUnet-server4.r`)
+
+### Purpose
+- Read raw multi-channel `.TIF` movies
+- Generate RGB `.jpg` previews + channel-specific `.jpg`
+- Segment **nuclei** and **cytoplasm** using 2 U-Nets
+- Export masks + basic object tracking + per-object biometry measurements
+
+### Expected input naming
+Files are expected to follow a pattern like:
 `<basename>_w<channel>_s<movie>_t<frame>.TIF`
 
-It groups files by:
-- `basename`
-- `movie` (s)
-- `frame` (t)
-- `channel` (w)
+(2 channels are assumed.)
 
-### 3) Build RGB preview images
-For each frame:
-- reads both channels
-- applies an **auto-contrast** normalization
-- merges into an RGB image (`rgbImage`)
-- exports:
-  - an RGB `.jpg`
-  - a per-channel `.jpg` into `green/` and `red/`
+### Key outputs (per dataset folder)
+LUnet writes to `targetmovie/.../<subfolder>/`:
+- `results-masks/` : color mask overlays (jpg)
+- `results-nuclei/` : nuclei masks as text (`.txt`, labeled IDs)
+- `results-cytoplasm/` : cytoplasm masks as text (`.txt`, labeled IDs)
+- `red/` and `green/` : exported channel jpgs
+- `redgreenfiles.txt` : mapping between each generated jpg frame and the original green/red `.TIF` paths  
+- `*_BIOMETRY.txt` : per-object measurements (surface, intensity, length/width, elongation, orientation, infolding, …)
 
-It also writes a `redgreenfiles.txt` mapping file linking the generated `.jpg` to the original `.TIF` files (useful for Spot-On).
-
-### 4) Segment nuclei and cytoplasm
-For each RGB image:
-- predicts probability maps using both U-Nets
-- thresholds predictions (`nucmaskthreshold`, `cytomaskthreshold`)
-- removes small false positives (size-based filtering)
-- separates nuclei using **watershed**
-- assigns cytoplasm regions by **seeded propagation / Voronoi-like partitioning** around nuclei
-- optionally fills small background gaps and removes nucleus pixels from cytoplasm masks
-
-### 5) Simple object tracking across frames
-To keep consistent object IDs over time:
-- computes object centers (via PCA-based centroid estimation)
-- stores centers in `positions.txt`
-- remaps object IDs between consecutive frames using nearest-neighbor matching (distance threshold `thr`)
-
-### 6) Export masks + measurements
-Per processed folder/movie the script generates:
-- `results-masks/` : color mask images
-- `results-nuclei/` : nuclei masks exported as `.txt`
-- `results-cytoplasm/` : cytoplasm masks exported as `.txt`
-- `results-composite/`, `results-watershed/`, `results-voronoi/`, `results-annot/` (created by the script for intermediate/visual outputs)
-- `*_BIOMETRY.txt` : per-object measurements including surface/area, mean intensity, length/width, elongation, orientation, and an “infolding” metric (based on convex hull vs. object area)
-
-### 7) Parallel processing
-The script parallelizes computation **per subfolder** using `foreach` + `doParallel` (cluster size set by `makeCluster(n)`).
-
----
-
-## Requirements
-
-R packages used include:
-- `keras`, `magick`, `EBImage`
-- `shotGroups`, `scales`, `dplyr`, `gtools`, `stringr`
-- `foreach`, `doParallel`
-
-You also need a working Keras/TensorFlow setup compatible with the `.h5` model weights.
-
----
-
-## Configuration (edit in the script)
-
-Key paths:
-- `movieroot` : input root folder containing `.TIF`
-- `targetmovie` : output root folder
-- `unetpathnuc`, `unetpathcyto` : model weight files
-
-Key parameters:
-- `input_sizeX`, `input_sizeY` (default 1024)
-- `nucmaskthreshold`, `cytomaskthreshold`
-- `watersize1`, `watersize2` (watershed)
-- `Voronoilambda` (propagation / Voronoi assignment)
-- `dobackground`, `extractnucfromcyto`
+### Configure and run
+Edit paths in the script:
+- `movieroot`   : input folder containing `.TIF`
+- `targetmovie` : output folder where results will be written
+- `unetpathnuc`, `unetpathcyto` : paths to the `.h5` weights
 
 Parallelism:
-- `makeCluster(5)` sets the number of worker processes
+- `makeCluster(5)` sets the number of workers (per subfolder).
+
+Run the script in R. At the end it prints: `all done!!`
 
 ---
 
-## Running
+## Step 2 — Run Spot-On quantification (`spoton5.r`)
 
-1. Install required R packages (and EBImage/Keras dependencies).
-2. Edit the paths and parameters at the top of the script.
-3. Run the script in R.
+### Purpose
+For each tracked spot (track/frame coordinates), the script:
+- Crops a small window around the spot (auto window size: ~40 px for 2048 images, ~20 px for 1024)
+- Detects a **spot mask** using a threshold computed on nuclear pixels only (mean + 2×sd)
+- Optionally cleans spot objects using a ML model (`fullmodelSpot.h5`) in the **red** channel
+- Quantifies:
+  - spot intensity (red/green)
+  - local nuclear background (excluding spot)
+  - nucleus-window intensity
+  - full nucleus and full cytoplasm mean intensities (using the nucleus ID near the spot)
+- Exports per-frame tables, per-track plots, QC composite images, and spot mask samples for later ML/QC
 
-At the end it stops the cluster and prints: `all done!!`
+### Inputs
+Spot-On expects:
+
+1) **LUnet output folder** (`targetpath`), containing for each frame:
+- `results-nuclei/<basename>_t<frame>.jpg.txt`
+- `results-cytoplasm/<basename>_t<frame>.jpg.txt`
+- `redgreenfiles.txt` (maps each jpg frame to the original `.TIF` files)
+
+2) **Original `.TIF` movies**
+The script uses `redgreenfiles.txt` to locate the original green/red `.TIF` per frame and then selects the z-slice.
+
+3) **Tracking CSV (`.csv`)**
+Tab-separated file with columns:
+`row, track, frame, x, y, z`
+
+Missing frames per track are filled by repeating first/last known coordinates so that each track has values over the full time range.
+
+### Outputs
+Written under `spotpath/<dataset>/<subfolder>/`:
+- `signal_data_<...>.txt` : per-frame measurements (tab-separated)
+- QC composite images per frame:
+  - `<basename>_track<track>_t<frame>.jpg`
+- Per-track plots:
+  - background-corrected spot signals over time (red/green)
+  - full nucleus/cytoplasm mean intensities over time
+- Spot mask samples for ML/QC under `AIspotpath/...`:
+  - spot masks (`track<id>-<frame>.jpg`)
+  - corresponding nucleus masks in `NUCmask/`
+
+### Configure and run
+Edit key variables:
+- `setwd(...)`         : folder with original movies
+- `targetpath`         : LUnet output root (from Step 1)
+- `spotpath`           : where quantification results are saved
+- `AIspotpath`         : where mask samples for ML/QC are saved
+- `modelspotpath`      : spot-cleaning ML model (`fullmodelSpot.h5`)
+- `alldir0`, `finalMaskpath` : dataset selection / output naming
+
+Parallelism:
+- `makeCluster(30)` runs one worker per track (set this to match the maximum number of tracks in your CSVs).
+
+Run the script in R. At the end it stops the cluster and prints: `all done!!`
+
+---
+
+## Notes / assumptions
+
+- The pipeline assumes **two channels** per frame (typically green/red).
+- LUnet produces masks at **1024×1024** for speed; Spot-On can upsample masks if the original frames are 2048×2048.
+- Spot-On uses the **red-derived spot mask** to quantify the green spot signal as well (same pixel mask).
+- Full nucleus/cytoplasm signals are computed for the nucleus label (`nucname`) found near the spot window.
+
+---
+
+## Quick checklist
+
+1. ✅ Put raw `.TIF` movies in `movieroot` (LUnet step).
+2. ✅ Set `targetmovie` for LUnet output and run `LUnet-server4.r`.
+3. ✅ Ensure `redgreenfiles.txt` and mask folders exist in `targetpath`.
+4. ✅ Provide tracking `.csv` files next to the `.TIF` movies.
+5. ✅ Set `targetpath`, `spotpath`, and `modelspotpath` then run `spoton5.r`.
+6. ✅ Collect tables/plots/QC images from `spotpath`.
+
 
 
 
 
 Download the latest release to get the code together with the ML models required by this software.
+
 
 
