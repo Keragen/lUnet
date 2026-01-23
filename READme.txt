@@ -142,8 +142,8 @@ Run the script in R. If no problem occur, at the end it prints: `all done!!`
 
 ## Quick checklist
 
-1. ✅ Put raw `.TIF` movies in `movieroot` (LUnet step).
-2. ✅ Set `targetmovie` for LUnet output and run `LUnet-server4.r`.
+1. ✅ set `movieroot` for lUnet input with your raw `.TIF` movie files.
+2. ✅ Set `targetmovie` for lUnet output and run `LUnet-server4.r`.
 3. ✅ Ensure `redgreenfiles.txt` and mask folders exist in `targetpath`.
 4. ✅ Provide tracking `.csv` files next to the `.TIF` movies.
 5. ✅ Set `targetpath`, `spotpath`, and `modelspotpath` then run `spoton5.r`.
@@ -154,6 +154,7 @@ Run the script in R. If no problem occur, at the end it prints: `all done!!`
 
 
 Download the latest release to get the code together with the ML models required by this software.
+
 
 
 
